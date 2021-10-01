@@ -191,6 +191,7 @@ const App = () => {
     console.log('Peripheral pressed : ', p)
     setPeripherals( peripherals => [...peripherals, { id: p.id, peripheral: p }] )
     console.log(peripherals)
+    //test
   }
 
 
