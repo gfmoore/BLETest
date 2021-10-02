@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react'
-import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, View, Text, TouchableOpacity, ScrollView, FlatList } from 'react-native'
+import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, Alert, View, Text, TouchableOpacity, ScrollView, FlatList } from 'react-native'
 
 import Icon from 'react-native-vector-icons/Feather'
 
@@ -26,23 +26,24 @@ LogBox.ignoreLogs(['Remote debugger'])
 
 const App = () => {
   
-  const [peripherals, setPeripherals] = useState([ { id:'123', name: 'gordo' } ])                                              //a list of all saved peripherals and saved into async storage
-  const plist = []       //perhaps a set?                                                                         //temporarily build a list of peripherals from async storage
+  const [peripherals, setPeripherals] = useState([ { id:'123', peripheral: {name: 'gordo' }} ])                                              //a list of all saved peripherals and saved into async storage
+  const plist = []                                                                               //temporarily build a list of peripherals from async storage
   
   const [peripheralsDiscovered, setPeripheralsDiscovered] = useState([])                          //peripherals found from a scan, stored in a Set object, why? So no duplicates
-  let pDiscovered = new Set()
+  let pDiscovered = []
 
   const [displayScanResults, setDisplayScanResults] = useState(false)                             //control the bluetooth button, press to scan press to stop
-
   
   const [peripheralConnected, setPeripheralConnected] = useState(false)
   const [rowTouched, setRowTouched] = useState(-1)                                                //to display a row as being connected
 
-  const [data, setData] = useState(null)
 
-  // const hrmperipheral      = 'F3:69:03:E9:DF:F9'
-  // const hrmservice         = '180f'
-  // const hrmcharacteristic  = '2a19'
+  const [peripheralData, setPeripheralData] = useState([])   //useState([{id: 0, data: 'heyipski'}])
+
+  //particular peripheral data
+  const [heartrate, setHeartrate] = useState('0')
+
+ 
 
   useEffect( () => {
     // ----------------------------------------------BLE Setup----------------------------------------------------
@@ -71,14 +72,14 @@ const App = () => {
     //set up handlers
     const bleMDiscoverPeripheral    = bleManagerEmitter.addListener('BleManagerDiscoverPeripheral', handleDiscoverPeripheral)
     const bleMStopScan              = bleManagerEmitter.addListener('BleManagerStopScan', handleStopScan)
-    const bleMUpdateValue           = bleManagerEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic)
+    //const bleMUpdateValue           = bleManagerEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic)
     const bleMDisconnectPeripheral  = bleManagerEmitter.addListener('BleManagerDisconnectPeripheral', handleDisconnectedPeripheral)
 
     //remove handlers on exit
     return (() => {
       bleMDiscoverPeripheral.remove()
       bleMStopScan.remove()
-      bleMUpdateValue.remove()
+      //bleMUpdateValue.remove()
       bleMDisconnectPeripheral.remove()
     })
 
@@ -138,13 +139,41 @@ const App = () => {
 
   }, [])
 
+  // const handleUpdateValueForCharacteristic = async (data) => {
+  //   console.log('Got here', data)
+  // }
+
+  const deletePeripheralFromList = (p) => {
+    console.log('delete', p)
+    //put an alert in 
+
+    Alert.alert(
+      "Delete this peripheral?",
+      "Are you sure? You will need to rescan if you want it back.",
+      [
+        {
+          text: "Cancel",
+          onPress: () => { },
+          style: "cancel"
+        },
+        {
+          text: "OK", onPress: () => {
+            let x = peripherals.filter(item => item.id !== p.id)
+            setPeripherals(x)
+          }
+        }
+      ]
+    )
+  }
+
   //---------------------------------------------------Scan button--------------------------------------------------
   
   const scanForMorePeripherals = () => {  //from bluetooth button
     console.log('Scanning...')
     if (!displayScanResults) {
       setDisplayScanResults(true)
-      pDiscovered.clear()
+      // pDiscovered.clear()
+      pDiscovered = []
       startScan()
     }
     else {
@@ -165,14 +194,16 @@ const App = () => {
 
   const handleStopScan = () => {  //from event emitter when scan time (3 seconds currently) finishes
     console.log('GM: Stopped scanning')
-    setPeripheralsDiscovered( Array.from(pDiscovered) )
+    // setPeripheralsDiscovered( Array.from(pDiscovered) )
+    setPeripheralsDiscovered(pDiscovered)
   }
 
   const stopScan = async () => {  //manual stop by pressing BT button
     try {
       await BleManager.stopScan()
       console.log('GM: Stopped scan manually')
-      setPeripheralsDiscovered(Array.from(pDiscovered) )
+      // setPeripheralsDiscovered(Array.from(pDiscovered) )
+      setPeripheralsDiscovered(pDiscovered)
     }
     catch (e) {
       console.log('GM: Error in stopping scan ' + e)
@@ -183,7 +214,12 @@ const App = () => {
     console.log(p.name)
     if (p.name !== null) {
       console.log('adding')
-      pDiscovered.add({id: p.id, peripheral: p})   //won't allow duplicates I hope
+      let unique = true
+      pDiscovered.forEach(pid => {
+        if (pid.id === p.id) unique = false
+      })
+      if (unique) pDiscovered.push({ id: p.id, peripheral: p })
+
     }
   }
 
@@ -191,13 +227,12 @@ const App = () => {
     console.log('Peripheral pressed : ', p)
     setPeripherals( peripherals => [...peripherals, { id: p.id, peripheral: p }] )
     console.log(peripherals)
-    //test
   }
 
 
-  //-------------------------------------------------
+  //--------------------------------------Connect peripheral and listen for notifications----------------------------------
 
-  //Just connect each peripheral manually. I think I should set event emitters for each peripheral inisde the peripherals array
+  //Just connect each peripheral manually. Should I set event emitters for each peripheral inisde the peripherals array
   const selectPeripheral = async (p, i) => {
     if (!peripheralConnected) {
       let itemId = p.item.id //"F3:69:03:E9:DF:F9"  
@@ -234,93 +269,61 @@ const App = () => {
     console.log("Disconnected by emitter")
   }
 
-
-  //"F3:69:03:E9:DF:F9"                           //peripheral id
-  // "180d",                                       //service uuid
-  // "2a37"                                        //characteristic uuid
   const readFromPeripheral = async () => {
+    //setup notifier 
+    await setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
+
+    //read from peripherals
     console.log('Read from peripheral')
+    let data
     try {
-      const data = await BleManager.read(  //these are all the read characteristics
-        "F3:69:03:E9:DF:F9",
-        // "1800",  //gave 72   [0]
-        // "2a00"
-        // "1800",  //gave 65   [1]
-        // "2a01"
-        // "1800",  //gave 200  [2]
-        // "2a04"
-        // "1800",  //gave 1    [3]
-        // "2aa6"
-        // "180a",  //gave 71   [7]
-        // "2a29"
-        // "180a",  //gave 51   [8]
-        // "2a24"
-        // "180a",  //gave 51   [9]
-        // "2a25"
-        // "180a",  //gave 49   [10]
-        // "2a27"
-        // "180a",  //gave 50   [11]
-        // "2a26"
-        // "180a",  //gave 50   [12]
-        // "2a28"
-        "180f",  //gave 85      [13]
-        "2a19"
-        // "180d",  //gave 1    [15]
-        // "2a38"
-
-        //notifiers 
-        //6a4e2401-667b-11e3-949a-0800200c9a66  6a4ecd28-667b-11e3-949a-0800200c9a66 [5]
-        //180f 2a19  is Notify and Read [13]
-        //180d 2a37 [14]
-
-        //WriteWithoutResponse [6]
-        //6a4e2401-667b-11e3-949a-0800200c9a66  6a4e4c80-667b-11e3-949a-0800200c9a66  
-
-        //Indicate
-        //1801 2a05
-
-      )
+      data = await BleManager.read('F3:69:03:E9:DF:F9', "180f", "2a19" )
+      setPeripheralData( peripheralData => [ ...peripheralData, { id: "Battery Level (180f 2a19)", data: data}])
       console.log('Read data ', data[0])
 
-      //connectAndPrepare(peripheral, service, characteristic)
+      data = await BleManager.read('F3:69:03:E9:DF:F9', "180d", "2a38")
+      setPeripheralData( peripheralData => [...peripheralData, { id: "Body Sensor Position (180d 2a38)", data: data }])
+      console.log('Read data ', data[0])
+
+      data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a29")
+      setPeripheralData( peripheralData => [...peripheralData, { id: "Manufacturer Name (180a 2a29)", data: data }])
+      console.log('Read data ', data[0])
+
+      data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a24")
+      setPeripheralData( peripheralData => [...peripheralData, { id: "Model Number (180a 2a24)", data: data }])
+      console.log('Read data ', data[0])
+
     }
     catch (e) {
       console.log("GM: Couldn't read data ", e)
     }
-
   }
 
+  const setupNotifier = async (peripheral, service, characteristic) => {
+    //setup notifier on heart rate
+    const pinfo = await BleManager.retrieveServices(peripheral)
+    console.log("Peripheral info ", pinfo)
 
+    const notifier = await BleManager.startNotification(peripheral, service, characteristic)
+    console.log('Heart Rate notifier started', notifier)
 
-  const handleUpdateValueForCharacteristic = async (data) => {
-    await BleManager.retrieveServices(peripheral);
-    console.log('Received data from ' + data.peripheral + ' characteristic ' + data.characteristic, data.value);
+    await bleManagerEmitter.addListener(
+      "BleManagerDidUpdateValueForCharacteristic",
+      ({ value, peripheral, characteristic, service }) => {
+        // Convert bytes array to string
+        const str = bytesToString(value);
+        console.log(`Received ${str} ${value} for characteristic ${characteristic}`)
+        setHeartrate(str)
+      }
+    )
   }
 
-
-
-  // async function connectAndPrepare(peripheral, service, characteristic) {
-  //   // Connect to peripheral
-  //   await BleManager.connect(peripheral);
-  //   // Before startNotification you need to call retrieveServices
-  //   await BleManager.retrieveServices(peripheral);
-  //   // To enable BleManagerDidUpdateValueForCharacteristic listener
-  //   await BleManager.startNotification(peripheral, service, characteristic);
-  //   // Add event listener
-  //   bleManagerEmitter.addListener(
-  //     "BleManagerDidUpdateValueForCharacteristic",
-  //     ({ value, peripheral, characteristic, service }) => {
-  //       // Convert bytes array to string
-  //       //const data = bytesToString(value);
-  //       //console.log(`Received ${data} for characteristic ${characteristic}`);
-  //       console.log(`Received ${value} for characteristic ${characteristic}`);
-  //     }
-  //   )
-  //   // Actions triggereng BleManagerDidUpdateValueForCharacteristic event
-  // }
-
-  const deletePeripheralFromList = (p) => {
-    console.log('delete', p)
+  function bytesToString(array) {
+    let result = "";
+    for (let i = 0; i < array.length; i++) {
+      result += String.fromCharCode(parseInt(array[i], 2));
+    }
+    return result;
   }
 
 
@@ -338,7 +341,7 @@ const App = () => {
         </TouchableOpacity>
       </View>
       
-
+      {/* Display saved peripherals */}
       <FlatList
         data={peripherals}
         keyExtractor={peripherals => peripherals.id}
@@ -346,14 +349,16 @@ const App = () => {
           return <> 
             <TouchableOpacity onPress={ () => selectPeripheral({ item }, { index }) } 
               style={[styles.peripheralrow, index === rowTouched ? {backgroundColor: 'skyblue'} : {backgroundColor: 'lightyellow'} ]} >
-              
-           
-              <Text style={[ styles.peripheralrowtext, { color: 'blue' } ]}>{item.id} {item.name} {index} </Text>
+              <View style={styles.peripheralslist}>
+                <Text style={[ styles.peripheralrowtext, { color: 'blue' } ]}>{item.id} {item.peripheral.name} </Text>
+                <Icon name='trash-2' onPress={() => deletePeripheralFromList( item )} color='blue' size={25}/>
+              </View>
             </TouchableOpacity>
           </>
         }} 
       />
 
+      {/* Display a list of scanned peripherals */}
       {displayScanResults 
         ? 
           <View>
@@ -373,6 +378,22 @@ const App = () => {
         :
           null
       } 
+
+      {/* Investigate data from connected peripheral */}
+      <TouchableOpacity style={styles.button} onPress={() => readFromPeripheral() }>
+        <Text style={styles.buttontext}>Read from peripheral</Text>
+      </TouchableOpacity>
+      <Text style={styles.text}>Heart rate (from notifier) : {heartrate}</Text>
+      <FlatList
+        data={peripheralData}
+        keyExtractor={peripheralData => peripheralData.id}
+        renderItem={({ item }) => {
+          return <>
+            <Text style={[styles.text, {color: 'grey'}]}>{item.id} {item.data}</Text>
+          </>
+        }}
+      />
+
     </View>  
   )
 }
@@ -403,6 +424,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'lightgreen',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'black',
+    borderRadius: 10,
+  },
+  buttontext: {
+    fontSize: 20,
   },
   text: {
     marginLeft: 20,
@@ -418,8 +445,11 @@ const styles = StyleSheet.create({
   scrollview: {
     flex: 1,
   },
+  peripheralslist: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   peripheralrow: {
-    alignItems: "flex-start",
     padding: 10,
     borderWidth: 1,
     borderColor: 'grey',  
