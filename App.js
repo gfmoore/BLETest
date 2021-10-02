@@ -37,8 +37,9 @@ const App = () => {
   const [peripheralConnected, setPeripheralConnected] = useState(false)
   const [rowTouched, setRowTouched] = useState(-1)                                                //to display a row as being connected
 
+  const [readPeripheralState, setReadPeripheralState] = useState(false)
 
-  const [peripheralData, setPeripheralData] = useState([])   //useState([{id: 0, data: 'heyipski'}])
+  const [peripheralData, setPeripheralData] = useState([])   //useState([{id: 0, data: 'heyupski'}])
 
   //particular peripheral data
   const [heartrate, setHeartrate] = useState('0')
@@ -259,8 +260,6 @@ const App = () => {
         await BleManager.disconnect(itemId)
         console.log("Disconnected")
         setPeripheralConnected(false)
-        //if a listener then disconnect
-        if (bleMUpdateValue !== null) bleMUpdateValue.remove()
       }
       catch (e) {
         console.log("GM: Couldn't disconnect ", e)
@@ -274,32 +273,43 @@ const App = () => {
   }
 
   const readFromPeripheral = async () => {
-    //setup notifier 
-    await setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
+    if (!readPeripheralState) {
+      setReadPeripheralState(true)
+      //setup notifier 
+      await setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
 
-    //read from peripherals
-    console.log('Read from peripheral')
-    let data
-    try {
-      data = await BleManager.read('F3:69:03:E9:DF:F9', "180f", "2a19" )
-      setPeripheralData( peripheralData => [ ...peripheralData, { id: "Battery Level (180f 2a19)", data: data}])
-      console.log('Read data ', data[0])
+      //read from peripherals
+      console.log('Read from peripheral')
+      let data
+      try {
+        data = await BleManager.read('F3:69:03:E9:DF:F9', "180f", "2a19" )
+        setPeripheralData( peripheralData => [ ...peripheralData, { id: "Battery Level (180f 2a19)", data: data}])
+        console.log('Read data ', data[0])
 
-      data = await BleManager.read('F3:69:03:E9:DF:F9', "180d", "2a38")
-      setPeripheralData( peripheralData => [...peripheralData, { id: "Body Sensor Position (180d 2a38)", data: data }])
-      console.log('Read data ', data[0])
+        data = await BleManager.read('F3:69:03:E9:DF:F9', "180d", "2a38")
+        setPeripheralData( peripheralData => [...peripheralData, { id: "Body Sensor Position (180d 2a38)", data: data }])
+        console.log('Read data ', data[0])
 
-      data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a29")
-      setPeripheralData( peripheralData => [...peripheralData, { id: "Manufacturer Name (180a 2a29)", data: data }])
-      console.log('Read data ', data[0])
+        data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a29")
+        setPeripheralData( peripheralData => [...peripheralData, { id: "Manufacturer Name (180a 2a29)", data: data }])
+        console.log('Read data ', data[0])
 
-      data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a24")
-      setPeripheralData( peripheralData => [...peripheralData, { id: "Model Number (180a 2a24)", data: data }])
-      console.log('Read data ', data[0])
-
+        data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a24")
+        setPeripheralData( peripheralData => [...peripheralData, { id: "Model Number (180a 2a24)", data: data }])
+        console.log('Read data ', data[0])
+      }
+      catch (e) {
+        console.log("GM: Couldn't read data ", e)
+      }
     }
-    catch (e) {
-      console.log("GM: Couldn't read data ", e)
+    else {
+      setReadPeripheralState(false)
+      //if a listener then disconnect
+      if (bleMUpdateValue !== null) bleMUpdateValue.remove()
+
+      //clear data
+      setPeripheralData([])
+      setHeartrate(0)
     }
   }
 
@@ -389,10 +399,10 @@ const App = () => {
       } 
 
       {/* Investigate data from connected peripheral */}
-      <TouchableOpacity style={styles.button} onPress={() => readFromPeripheral() }>
+      <TouchableOpacity style={[styles.button, readPeripheralState ? {backgroundColor: 'skyblue'} : {backgroundColor: 'lightgreen'} ]} onPress={() => readFromPeripheral() }>
         <Text style={styles.buttontext}>Read from peripheral</Text>
       </TouchableOpacity>
-      <Text style={styles.text}>Heart rate (from notifier) : {heartrate}</Text>
+      <Text style={styles.heartratetext}>Heart rate (from notifier) : {heartrate}</Text>
       <FlatList
         data={peripheralData}
         keyExtractor={peripheralData => peripheralData.id}
@@ -444,6 +454,11 @@ const styles = StyleSheet.create({
     marginLeft: 20,
     marginTop: 20, 
     fontSize: 20,
+  },
+  heartratetext: {
+    marginLeft: 20,
+    marginTop: 20, 
+    fontSize: 26,
   },
   textheader: {
     marginLeft: 20,
