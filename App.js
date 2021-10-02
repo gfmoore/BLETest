@@ -72,6 +72,7 @@ const App = () => {
     //set up handlers
     const bleMDiscoverPeripheral    = bleManagerEmitter.addListener('BleManagerDiscoverPeripheral', handleDiscoverPeripheral)
     const bleMStopScan              = bleManagerEmitter.addListener('BleManagerStopScan', handleStopScan)
+    const bleMUpdateValue = null
     //const bleMUpdateValue           = bleManagerEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic)
     const bleMDisconnectPeripheral  = bleManagerEmitter.addListener('BleManagerDisconnectPeripheral', handleDisconnectedPeripheral)
 
@@ -80,6 +81,7 @@ const App = () => {
       bleMDiscoverPeripheral.remove()
       bleMStopScan.remove()
       //bleMUpdateValue.remove()
+      if (bleMUpdateValue !== null) bleMUpdateValue.remove()
       bleMDisconnectPeripheral.remove()
     })
 
@@ -257,12 +259,14 @@ const App = () => {
         await BleManager.disconnect(itemId)
         console.log("Disconnected")
         setPeripheralConnected(false)
+        //if a listener then disconnect
+        if (bleMUpdateValue !== null) bleMUpdateValue.remove()
       }
       catch (e) {
         console.log("GM: Couldn't disconnect ", e)
       }
     }
-    console.log(rowTouched)
+    
   }
 
   const handleDisconnectedPeripheral = () => {
@@ -299,6 +303,7 @@ const App = () => {
     }
   }
 
+
   const setupNotifier = async (peripheral, service, characteristic) => {
     //setup notifier on heart rate
     const pinfo = await BleManager.retrieveServices(peripheral)
@@ -307,13 +312,17 @@ const App = () => {
     const notifier = await BleManager.startNotification(peripheral, service, characteristic)
     console.log('Heart Rate notifier started', notifier)
 
-    await bleManagerEmitter.addListener(
+    bleMUpdateValue = await bleManagerEmitter.addListener(
       "BleManagerDidUpdateValueForCharacteristic",
       ({ value, peripheral, characteristic, service }) => {
-        // Convert bytes array to string
-        const str = bytesToString(value);
-        console.log(`Received ${str} ${value} for characteristic ${characteristic}`)
-        setHeartrate(str)
+        let str
+        // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
+        if (value[0] === 0) {
+          str = value[1].toString()
+          setHeartrate(str)
+        }
+        console.log(`Received from notifier ${value} --> ${str} `)
+
       }
     )
   }
