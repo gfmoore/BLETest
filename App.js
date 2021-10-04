@@ -77,14 +77,7 @@ const App = () => {
     //const bleMUpdateValue           = bleManagerEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic)
     const bleMDisconnectPeripheral  = bleManagerEmitter.addListener('BleManagerDisconnectPeripheral', handleDisconnectedPeripheral)
 
-    //remove handlers on exit
-    return (() => {
-      bleMDiscoverPeripheral.remove()
-      bleMStopScan.remove()
-      //bleMUpdateValue.remove()
-      if (bleMUpdateValue !== null) bleMUpdateValue.remove()
-      bleMDisconnectPeripheral.remove()
-    })
+
 
     //-------------------------------------------Get saved peripherals from async storage---------------------------------------
     //#region some async storage stuff
@@ -111,6 +104,7 @@ const App = () => {
 
     //Are there any ble peripherals in async
     const getAllSavedPeripherals = async () => {
+      console.log('hello')
       let keys = []
       try {
         keys = await AsyncStorage.getAllKeys()
@@ -132,15 +126,28 @@ const App = () => {
         let p = await AsyncStorage.getItem(key)
 
         plist.push( JSON.parse(p) )
-        console.log(plist)
+        console.log('heyup',plist)
       }
       catch (e) {
         console.log('GM: get key data error : ', e)
       }
     }
-    //getAllSavedPeripherals()
+
+    getAllSavedPeripherals()
+
+
+    //remove handlers on exit -- need these at end
+    return (() => {
+      bleMDiscoverPeripheral.remove()
+      bleMStopScan.remove()
+      //bleMUpdateValue.remove()
+      if (bleMUpdateValue !== null) bleMUpdateValue.remove()
+      bleMDisconnectPeripheral.remove()
+    })
 
   }, [])
+
+
 
   // const handleUpdateValueForCharacteristic = async (data) => {
   //   console.log('Got here', data)
