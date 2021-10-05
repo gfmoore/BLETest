@@ -238,14 +238,13 @@ const App = () => {
 
   //Press Peripheral from list
   const selectPeripheral = async (p, i) => {
-    if (!peripheralConnected) {
+    if (!peripheralConnected) {  //pressed on row to connect
       let itemId = p.item.id //"F3:69:03:E9:DF:F9"  
       setRowTouched(i.index) //to highlight row  note the i.index
       try {
         const d = await BleManager.connect(itemId)
         setPeripheralConnected(true)
         const peripheralinfo = await BleManager.retrieveServices(itemId)
-        console.log("Connected Peripheral info:", peripheralinfo);
         peripheralSelected(peripheralinfo)
       }
       catch (e) {
@@ -254,9 +253,13 @@ const App = () => {
         setRowTouched(-1)
       }
     }
-    else {
+    else {  //pressed on row to disconnect
       let itemId = p.item.id
       setRowTouched(-1)
+      setHeartrate('0')
+      setSpeedo(0)
+      setCadence(0)
+      setMotor(null)
       try {
         await BleManager.disconnect(itemId)
         setPeripheralConnected(false)
@@ -268,43 +271,108 @@ const App = () => {
   }
 
   //I pressed on the peripheral row
-  const peripheralSelected = (peripheralinfo) => {
-    console.log('here')
+  const peripheralSelected = async (peripheralinfo) => {
     //This is so hardcoded!!!!
     if (peripheralinfo.id === 'F3:69:03:E9:DF:F9') {  //the heart rate monitor
       setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
+    }
+    if (peripheralinfo.id === 'E8:72:D1:25:6E:4E') {  //the speedo
+      setupNotifier('E8:72:D1:25:6E:4E', '1816', '2A5B')
+    }
+    if (peripheralinfo.id === 'D6:70:81:A8:5B:2D') {  //the cadence
+      setupNotifier('D6:70:81:A8:5B:2D', '1816', '2A5B')
+    }
+    if (peripheralinfo.id === 'xx:xx:xx:xx:xx:xx') {  //TSDZ2 motor
+      setupNotifier('xx:xx:xx:xx:xx:xx', 'xxxx', 'xxxx')
     }
   }
 
   const handleDisconnectedPeripheral = () => {
     console.log("Disconnected by emitter")
-    setHeartrate('0')
   }
 
   const setupNotifier = async (peripheral, service, characteristic) => {
     const pinfo = await BleManager.retrieveServices(peripheral)
 
     await BleManager.startNotification(peripheral, service, characteristic)
-    console.log('Heart Rate notifier started')
+    console.log('Notifier started', pinfo)
+
+    let sEventTime = 0
+    let eventRotations = 0
+    let oldRotations = 0
+    let rotations = 0
+    let oldSEventTime = 0
+    let speedo
+
+    let cEventTime = 0
+    let cEventTurns = 0
+    let crankTurns = 0
+    let oldCEventTime = 0
+    let cadence
+    let circumferenceKm =  700 * Math.PI / (100 * 1000)     //km for 700cm wheel
+    let circumferenceMi =  26 * Math.PI /( 36 * 1760)       //miles for 26inch wheel  
+    let str 
 
     bleMUpdateValue = await bleManagerEmitter.addListener(
       "BleManagerDidUpdateValueForCharacteristic",
       ({ value, peripheral, characteristic, service }) => {
-        //all hardcoded for HRM
-        let str
-        // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
-        if (value[0] === 0) {
-          str = value[1].toString()
-          setHeartrate(str)
-        }
-        console.log(`Received from notifier ${value} --> ${str} `)
+        //because might stop pedalling or come to a stop or might have heart attack ;)
+        str = ''
+        speedo = 0
+        cadence = 0
 
+        if (peripheral === 'F3:69:03:E9:DF:F9') { //all hardcoded for Heart Rate Monitor
+          if (value[0] === 0) {  // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
+            str = value[1].toString()
+            setHeartrate(str)
+          }
+        }
+
+        //these could be jerky, might need to implement a moving average
+        if (peripheral === 'E8:72:D1:25:6E:4E') {  //speedo  
+          let sEventTime = ((value[6] * 256) + value[5])  //to give 1/1024 seconds, little endian remember [1, 221, 41, 4, 0, 86, 212]
+          let eventRotations = value[4] * + 16777216 + value[3] * 65536 + value[2] * 256 + value[1]  //huge?
+
+          if (oldRotations !== eventRotations) {  //there has been a change in rotations even if sEventRotations rolls over overflows every 4 billion seconds
+            rotations = eventRotations - oldRotations
+
+            if (sEventTime <= oldSEventTime) {  //eventTime should be greater than oldEventTime, unless EventTime has rolled over
+              //easier to just miss it out??
+            }
+            else {
+              speedo = 3686400 / (sEventTime - oldSEventTime)   //60 * 60 * 1024 = 3686400 for rphour
+              speedo = speedo / rotations  //should be just 1 but I've seen 2 or even 3
+              speedo = speedo * circumferenceKm             
+            }
+
+            oldSEventTime = sEventTime
+            oldRotations = eventRotations
+          }
+          setSpeed(speedo.toFixed(1))
+        }
+
+        //these could be jerky, might need to implement a moving average
+        if (peripheral === 'D6:70:81:A8:5B:2D') {  //cadence
+          let cEventTime = ((value[4] * 256)  + value[3])  //to give 1/1024 seconds, little endian remember [2, 110, 0, 86, 212]
+          let cEventTurns = value[2] * 256 + value[1]
+
+          if (crankTurns !== cEventTurns) {     //there has been a change in crankTurns even if eventTurns rolls over overflows every 64 seconds     
+            if (cEventTime <= oldCEventTime) {  //eventTime should be greater than oldEventTime, unless EventTime has rolled over
+              //easier to just miss it out??
+            }
+            else {
+              cadence = 61440 / (cEventTime - oldCEventTime)   //60 * 1024 = 61440 for rpm
+              console.log(`Cadence ${cadence} --> ${crankTurns} --> ${cEventTime - oldCEventTime}`)
+              crankTurns = cEventTurns
+            }
+            oldCEventTime = cEventTime
+
+          }
+          setCadence(cadence.toFixed(0))
+        }
       }
     )
   }
-
-
-
 
   //----------------------------------------------JSX---------------------------------------------------------
 
@@ -359,12 +427,7 @@ const App = () => {
         }} 
       />
 
-
-
-      {/* Investigate data from connected peripheral */}
-      {/* <TouchableOpacity style={[styles.button, readPeripheralState ? {backgroundColor: 'skyblue'} : {backgroundColor: 'lightgreen'} ]} onPress={() => readFromPeripheral() }>
-        <Text style={styles.buttontext}>Read from peripheral</Text>
-      </TouchableOpacity> */}
+      {/* Some data values to display */}
       {peripheralConnected 
         ?
           <>
@@ -376,16 +439,6 @@ const App = () => {
         :
          null
       }
-
-      {/* <FlatList
-        data={peripheralData}
-        keyExtractor={peripheralData => peripheralData.id}
-        renderItem={({ item }) => {
-          return <>
-            <Text style={[styles.text, {color: 'grey'}]}>{item.id} {item.data}</Text>
-          </>
-        }}
-      /> */}
 
     </View>  
   )
@@ -471,337 +524,3 @@ const styles = StyleSheet.create({
 })
 
 export default App
-
-//https://stackoverflow.com/questions/41146446/get-rid-of-remote-debugger-is-in-a-background-tab-warning-in-react-native/54392003#54392003
-//check priority box in debugger (top left, to the right)
-
-//TODO this is all a bit hardcoded
-// const readFromPeripheral = async () => {
-//   if (!readPeripheralState) {
-//     setReadPeripheralState(true)
-//     //setup notifier 
-//     await setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
-
-//     //read from peripherals
-//     console.log('Read from peripheral')
-//     let data
-//     try {
-//       // data = await BleManager.read('F3:69:03:E9:DF:F9', "180f", "2a19" )
-//       // setPeripheralData( peripheralData => [ ...peripheralData, { id: "Battery Level (180f 2a19)", data: data}])
-//       // console.log('Read data ', data[0])
-
-//       // data = await BleManager.read('F3:69:03:E9:DF:F9', "180d", "2a38")
-//       // setPeripheralData( peripheralData => [...peripheralData, { id: "Body Sensor Position (180d 2a38)", data: data }])
-//       // console.log('Read data ', data[0])
-
-//       // data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a29")
-//       // setPeripheralData( peripheralData => [...peripheralData, { id: "Manufacturer Name (180a 2a29)", data: data }])
-//       // console.log('Read data ', data[0])
-
-//       // data = await BleManager.read('F3:69:03:E9:DF:F9', "180a", "2a24")
-//       // setPeripheralData( peripheralData => [...peripheralData, { id: "Model Number (180a 2a24)", data: data }])
-//       // console.log('Read data ', data[0])
-//     }
-//     catch (e) {
-//       console.log("GM: Couldn't read data ", e)
-//     }
-//   }
-//   else {
-//     setReadPeripheralState(false)
-//     //if a listener then disconnect
-//     if (bleMUpdateValue !== null) bleMUpdateValue.remove()
-
-//     //clear data
-//     setPeripheralData([])
-//     setHeartrate(0)
-//   }
-// }
-
-
-
-//
-    //Are there any ble peripherals in async
-    // const getAllSavedPeripherals = async () => {
-    //   let keys = []
-    //   try {
-    //     keys = await AsyncStorage.getAllKeys()
-    //     if (keys !== null) {
-    //       keys.forEach(key => {
-    //         if (key.startsWith('ble')) {
-    //           getPeripheral(key)
-    //         }
-    //       })
-    //     }
-
-    //   } catch (e) {
-    //     console.log('GM: get all keys error : ', e)
-    //   }
-    // }
-
-    // const getPeripheral = async (key) => {
-    //   try {
-    //     let p = await AsyncStorage.getItem(key)
-
-    //     plist.push( JSON.parse(p) )
-    //     console.log('heyup',plist)
-    //   }
-    //   catch (e) {
-    //     console.log('GM: get key data error : ', e)
-    //   }
-    // }
-    // //
-
-
-    // <View style={ styles.scanContainer }>
-    //     <TouchableOpacity style={ styles.button } onPress={startScan}>
-    //       <Text>Scan</Text>
-    //     </TouchableOpacity>
-    //     <TouchableOpacity style={ styles.button } onPress={stopScan}>
-    //       <Text>Stop Scan</Text>
-    //     </TouchableOpacity>
-    //   </View>
-
-    //   <TouchableOpacity style={styles.button} onPress={listPeripherals}>
-    //     <Text>List peripherals</Text>
-    //   </TouchableOpacity>
-
-    //   <TouchableOpacity style={styles.button} onPress={() => readFromPeripheral() }>
-    //     <Text>Read from peripheral</Text>
-    //   </TouchableOpacity>
-
-      
-      // {/* <ScrollView style={styles.scollview}> */}
-      //   <FlatList
-      //     data={peripherals}
-      //     keyExtractor={peripherals => peripherals.id}
-      //     renderItem={({ item }) => { 
-      //       return <> 
-      //         <TouchableOpacity onPress={() => selectPeripheral({ item })} style={[styles.peripheralrow, , peripheralConnected ? styles.peripheralconnected : styles.peripheraldisconnected]} >
-      //           <Text style={styles.peripheralrowtext}>{item.name}</Text>
-      //         </TouchableOpacity>
-      //       </>
-      //     }}
-      //   />
-      // </ScrollView>
-
-
-// import React, {
-//   useState,
-//   useEffect,
-// } from 'react';
-// import {
-//   SafeAreaView,
-//   StyleSheet,
-//   ScrollView,
-//   View,
-//   Text,
-//   StatusBar,
-//   NativeModules,
-//   NativeEventEmitter,
-//   Button,
-//   Platform,
-//   PermissionsAndroid,
-//   FlatList,
-//   TouchableHighlight,
-// } from 'react-native';
-
-// import {
-//   Colors,
-// } from 'react-native/Libraries/NewAppScreen';
-
-// import BleManager from 'react-native-ble-manager';
-// const BleManagerModule = NativeModules.BleManager;
-// const bleManagerEmitter = new NativeEventEmitter(BleManagerModule);
-
-// const App = () => {
-//   const [isScanning, setIsScanning] = useState(false);
-//   const peripherals = new Map();
-//   const [list, setList] = useState([]);
-
-//   peripherals.set('1', 'some data')
-
-//   const startScan = () => {
-//     if (!isScanning) {
-//       BleManager.scan([], 3, true).then((results) => {
-//         console.log('Scanning...');
-//         setIsScanning(true);
-//       }).catch(err => {
-//         console.error(err);
-//       });
-//     }
-//   }
-
-//   const handleStopScan = () => {
-//     console.log('Scan is stopped');
-//     setIsScanning(false);
-//   }
-
-//   // const handleDisconnectedPeripheral = (data) => {
-//   //   let peripheral = peripherals.get(data.peripheral);
-//   //   if (peripheral) {
-//   //     peripheral.connected = false;
-//   //     peripherals.set(peripheral.id, peripheral);
-//   //     setList(Array.from(peripherals.values()));
-//   //   }
-//   //   console.log('Disconnected from ' + data.peripheral);
-//   // }
-
-//   // const handleUpdateValueForCharacteristic = (data) => {
-//   //   console.log('Received data from ' + data.peripheral + ' characteristic ' + data.characteristic, data.value);
-//   // }
-
-//   // const retrieveConnected = () => {
-//   //   BleManager.getConnectedPeripherals([]).then((results) => {
-//   //     if (results.length == 0) {
-//   //       console.log('No connected peripherals')
-//   //     }
-//   //     console.log(results);
-//   //     for (var i = 0; i < results.length; i++) {
-//   //       var peripheral = results[i];
-//   //       peripheral.connected = true;
-//   //       peripherals.set(peripheral.id, peripheral);
-//   //       setList(Array.from(peripherals.values()));
-//   //     }
-//   //   });
-//   // }
-
-//   const handleDiscoverPeripheral = (peripheral) => {
-//     console.log('Got ble peripheral', peripheral);
-//     if (!peripheral.name) {
-//       peripheral.name = 'NO NAME';
-//     }
-//     peripherals.set(peripheral.id, peripheral);
-//     setList(Array.from(peripherals.values()));
-//   }
-
-
-//   useEffect(() => {
-//     BleManager.start({ showAlert: false });
-
-//     bleManagerEmitter.addListener('BleManagerDiscoverPeripheral', handleDiscoverPeripheral);
-//     bleManagerEmitter.addListener('BleManagerStopScan', handleStopScan);
-//     // bleManagerEmitter.addListener('BleManagerDisconnectPeripheral', handleDisconnectedPeripheral);
-//     // bleManagerEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic);
-
-//     if (Platform.OS === 'android' && Platform.Version >= 23) {
-//       PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION).then((result) => {
-//         if (result) {
-//           console.log("Permission is OK");
-//         } else {
-//           PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION).then((result) => {
-//             if (result) {
-//               console.log("User accept");
-//             } else {
-//               console.log("User refuse");
-//             }
-//           });
-//         }
-//       });
-//     }
-
-//     return (() => {
-//       console.log('unmount');
-//       bleManagerEmitter.removeListener('BleManagerDiscoverPeripheral', handleDiscoverPeripheral);
-//       bleManagerEmitter.removeListener('BleManagerStopScan', handleStopScan);
-//       // bleManagerEmitter.removeListener('BleManagerDisconnectPeripheral', handleDisconnectedPeripheral);
-//       // bleManagerEmitter.removeListener('BleManagerDidUpdateValueForCharacteristic', handleUpdateValueForCharacteristic);
-//     })
-//   }, []);
-
-//   const renderItem = (item) => {
-//     const color = item.connected ? 'green' : '#fff';
-//     return (
-//       <TouchableHighlight onPress={() => testPeripheral(item)}>
-//         <View style={[styles.row, { backgroundColor: color }]}>
-//           <Text style={{ fontSize: 12, textAlign: 'center', color: '#333333', padding: 10 }}>{item.name}</Text>
-//           <Text style={{ fontSize: 10, textAlign: 'center', color: '#333333', padding: 2 }}>RSSI: {item.rssi}</Text>
-//           <Text style={{ fontSize: 8, textAlign: 'center', color: '#333333', padding: 2, paddingBottom: 20 }}>{item.id}</Text>
-//         </View>
-//       </TouchableHighlight>
-//     );
-//   }
-
-//   return (
-//     <>
-//       <StatusBar barStyle="dark-content" />
-//       <SafeAreaView>
-//         <ScrollView
-//           contentInsetAdjustmentBehavior="automatic"
-//           style={styles.scrollView}>
-//           {global.HermesInternal == null ? null : (
-//             <View style={styles.engine}>
-//               <Text style={styles.footer}>Engine: Hermes</Text>
-//             </View>
-//           )}
-//           <View style={styles.body}>
-
-//             <View style={{ margin: 10 }}>
-//               <Button
-//                 title={'Scan Bluetooth (' + (isScanning ? 'on' : 'off') + ')'}
-//                 onPress={() => startScan()}
-//               />
-//             </View>
-
-//             <View style={{ margin: 10 }}>
-//               <Button title="Retrieve connected peripherals" onPress={() => retrieveConnected()} />
-//             </View>
-
-//             {(list.length == 0) &&
-//               <View style={{ flex: 1, margin: 20 }}>
-//                 <Text style={{ textAlign: 'center' }}>No peripherals</Text>
-//               </View>
-//             }
-
-//           </View>
-//         </ScrollView>
-//         <FlatList
-//           data={list}
-//           renderItem={({ item }) => renderItem(item)}
-//           keyExtractor={item => item.id}
-//         />
-//       </SafeAreaView>
-//     </>
-//   );
-// };
-
-// const styles = StyleSheet.create({
-//   scrollView: {
-//     backgroundColor: Colors.lighter,
-//   },
-//   engine: {
-//     position: 'absolute',
-//     right: 0,
-//   },
-//   body: {
-//     backgroundColor: Colors.white,
-//   },
-//   sectionContainer: {
-//     marginTop: 32,
-//     paddingHorizontal: 24,
-//   },
-//   sectionTitle: {
-//     fontSize: 24,
-//     fontWeight: '600',
-//     color: Colors.black,
-//   },
-//   sectionDescription: {
-//     marginTop: 8,
-//     fontSize: 18,
-//     fontWeight: '400',
-//     color: Colors.dark,
-//   },
-//   highlight: {
-//     fontWeight: '700',
-//   },
-//   footer: {
-//     color: Colors.dark,
-//     fontSize: 12,
-//     fontWeight: '600',
-//     padding: 4,
-//     paddingRight: 12,
-//     textAlign: 'right',
-//   },
-// });
-
-// export default App;
-
