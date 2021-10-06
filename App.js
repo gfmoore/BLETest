@@ -35,8 +35,9 @@ const App = () => {
 
   const [displayScanResults, setDisplayScanResults] = useState(false)                             //control the bluetooth button, press to scan press to stop
   
-  const [peripheralConnected, setPeripheralConnected] = useState(false)
-  const [rowTouched, setRowTouched] = useState(-1)                                                //to display a row as being connected
+  const [peripheralsConnected, setPeripheralsConnected] = useState([])
+  const [rowsTouched, setRowsTouched] = useState([])                                                //to display a row as being connected
+
 
   const [readPeripheralState, setReadPeripheralState] = useState(false)
 
@@ -236,56 +237,51 @@ const App = () => {
 
   //--------------------------------------Connect peripheral and listen for notifications----------------------------------
 
-  //Press Peripheral from list
+
   const selectPeripheral = async (p, i) => {
-    if (!peripheralConnected) {  //pressed on row to connect
-      let itemId = p.item.id //"F3:69:03:E9:DF:F9"  
-      setRowTouched(i.index) //to highlight row  note the i.index
+    let itemId = p.item.id  //e.g. "F3:69:03:E9:DF:F9" 
+    if ( !rowsTouched.includes(i.index) ) {   //array of touched rows
+      setRowsTouched([...rowsTouched, i.index])
+      //now connect to the selected peripheral
       try {
-        const d = await BleManager.connect(itemId)
-        setPeripheralConnected(true)
+        await BleManager.connect(itemId)
+        setPeripheralsConnected([...peripheralsConnected, i.index])
         const peripheralinfo = await BleManager.retrieveServices(itemId)
-        peripheralSelected(peripheralinfo)
+        //so hard coded!!
+        if (peripheralinfo.id === 'F3:69:03:E9:DF:F9') {  //the heart rate monitor
+          setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
+        }
+        if (peripheralinfo.id === 'E8:72:D1:25:6E:4E') {  //the speedo
+          setupNotifier('E8:72:D1:25:6E:4E', '1816', '2A5B')
+        }
+        if (peripheralinfo.id === 'D6:70:81:A8:5B:2D') {  //the cadence
+          setupNotifier('D6:70:81:A8:5B:2D', '1816', '2A5B')
+        }
+        if (peripheralinfo.id === 'xx:xx:xx:xx:xx:xx') {  //TSDZ2 motor
+          setupNotifier('xx:xx:xx:xx:xx:xx', 'xxxx', 'xxxx')
+        }
       }
-      catch (e) {
+      catch(e) {
         console.log("GM: Couldn't connect ", e)
-        setPeripheralConnected(false)
-        setRowTouched(-1)
+        setRowsTouched(rowsTouched.filter(r => r !== i.index)) 
+        setPeripheralsConnected(peripheralsConnected.filter(p => p !== i.index))
       }
     }
-    else {  //pressed on row to disconnect
-      let itemId = p.item.id
-      setRowTouched(-1)
-      setHeartrate('0')
-      setSpeedo(0)
-      setCadence(0)
-      setMotor(null)
+    else {  //now disconnect from deselected peripheral
+      setRowsTouched(rowsTouched.filter(r => r !== i.index))
       try {
         await BleManager.disconnect(itemId)
-        setPeripheralConnected(false)
       }
-      catch (e) {
+      catch(e) {
         console.log("GM: Couldn't disconnect ", e)
+        //and do what?
       }
     }
   }
 
-  //I pressed on the peripheral row
-  const peripheralSelected = async (peripheralinfo) => {
-    //This is so hardcoded!!!!
-    if (peripheralinfo.id === 'F3:69:03:E9:DF:F9') {  //the heart rate monitor
-      setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
-    }
-    if (peripheralinfo.id === 'E8:72:D1:25:6E:4E') {  //the speedo
-      setupNotifier('E8:72:D1:25:6E:4E', '1816', '2A5B')
-    }
-    if (peripheralinfo.id === 'D6:70:81:A8:5B:2D') {  //the cadence
-      setupNotifier('D6:70:81:A8:5B:2D', '1816', '2A5B')
-    }
-    if (peripheralinfo.id === 'xx:xx:xx:xx:xx:xx') {  //TSDZ2 motor
-      setupNotifier('xx:xx:xx:xx:xx:xx', 'xxxx', 'xxxx')
-    }
-  }
+  useEffect( () => {  //close display of speedo hr cadence etc if nothing selected
+    if (rowsTouched.length === 0) setPeripheralsConnected([])
+  }, [rowsTouched] )
 
   const handleDisconnectedPeripheral = () => {
     console.log("Disconnected by emitter")
@@ -311,23 +307,22 @@ const App = () => {
     let cadence
     let circumferenceKm =  700 * Math.PI / (100 * 1000)     //km for 700cm wheel
     let circumferenceMi =  26 * Math.PI /( 36 * 1760)       //miles for 26inch wheel  
+    
     let str 
 
     bleMUpdateValue = await bleManagerEmitter.addListener(
       "BleManagerDidUpdateValueForCharacteristic",
       ({ value, peripheral, characteristic, service }) => {
-        //because might stop pedalling or come to a stop or might have heart attack ;)
-        str = ''
-        speedo = 0
-        cadence = 0
 
-        if (peripheral === 'F3:69:03:E9:DF:F9') { //all hardcoded for Heart Rate Monitor
+        //HRM
+        if (peripheral === 'F3:69:03:E9:DF:F9') { 
           if (value[0] === 0) {  // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
             str = value[1].toString()
             setHeartrate(str)
           }
         }
 
+        //Speedo
         //these could be jerky, might need to implement a moving average
         if (peripheral === 'E8:72:D1:25:6E:4E') {  //speedo  
           let sEventTime = ((value[6] * 256) + value[5])  //to give 1/1024 seconds, little endian remember [1, 221, 41, 4, 0, 86, 212]
@@ -348,9 +343,13 @@ const App = () => {
             oldSEventTime = sEventTime
             oldRotations = eventRotations
           }
+          else { //no change in rotations. Should I stick a counter here and go to zero only after a certain time?
+            speedo = 0
+          }
           setSpeed(speedo.toFixed(1))
         }
 
+        //Cadence
         //these could be jerky, might need to implement a moving average
         if (peripheral === 'D6:70:81:A8:5B:2D') {  //cadence
           let cEventTime = ((value[4] * 256)  + value[3])  //to give 1/1024 seconds, little endian remember [2, 110, 0, 86, 212]
@@ -417,9 +416,16 @@ const App = () => {
         renderItem={ ( { item, index } ) => { 
           return <> 
             <TouchableOpacity onPress={ () => selectPeripheral({ item }, { index }) } 
-              style={[styles.peripheralrow, index === rowTouched ? {backgroundColor: 'skyblue'} : {backgroundColor: 'lightyellow'} ]} >
+              style={[styles.peripheralrow, (
+                peripheralsConnected.includes(index) && rowsTouched.includes(index) ? { backgroundColor: 'lightgreen' }
+                : 
+                !peripheralsConnected.includes(index) && rowsTouched.includes(index) ? { backgroundColor: 'orange' }
+                :
+                { backgroundColor: 'lightyellow' }
+              )]} >
+             
               <View style={styles.peripheralslist}>
-                <Text style={[styles.peripheralrowtext, { color: 'blue' }]}>{item.peripheral.name} </Text>
+                <Text style={[styles.peripheralrowtext, { color: 'blue' }]}>{index} {item.peripheral.name} </Text>
                 <Icon name='trash-2' onPress={() => deletePeripheralFromList( item )} color='blue' size={25}/>
               </View>
             </TouchableOpacity>
@@ -428,12 +434,12 @@ const App = () => {
       />
 
       {/* Some data values to display */}
-      {peripheralConnected 
+      {peripheralsConnected.length !== 0
         ?
           <>
-            <Text style={styles.heartratetext}>Heart rate: {heartrate}</Text>
-            <Text style={styles.heartratetext}>Speed: {speed}</Text>
-            <Text style={styles.heartratetext}>Cadence: {cadence}</Text>
+            <Text style={styles.heartratetext}>Heart rate:  {heartrate}</Text>
+            <Text style={styles.heartratetext}>Speed:       {speed}</Text>
+            <Text style={styles.heartratetext}>Cadence:     {cadence}</Text>
             <Text style={styles.heartratetext}>TSDZ2 Motor: {motor}</Text>
           </>
         :
