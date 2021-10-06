@@ -298,12 +298,16 @@ const App = () => {
     let oldRotations = 0
     let rotations = 0
     let oldSEventTime = 0
+    let speedoAvg = [0,0,0,0,0]  //5 point moving average
+    let spdcnt = 0
     let speedo
 
     let cEventTime = 0
     let cEventTurns = 0
     let crankTurns = 0
     let oldCEventTime = 0
+    let cadenceAvg = [0,0,0,0,0]  //5 point moving average
+    let cadcnt = 0
     let cadence
     let circumferenceKm =  700 * Math.PI / (100 * 1000)     //km for 700cm wheel
     let circumferenceMi =  26 * Math.PI /( 36 * 1760)       //miles for 26inch wheel  
@@ -319,14 +323,16 @@ const App = () => {
           if (value[0] === 0) {  // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
             str = value[1].toString()
             setHeartrate(str)
+            console.log('heartrate ', str)
           }
         }
 
         //Speedo
-        //these could be jerky, might need to implement a moving average
+        //this could be jerky, implement a moving average
         if (peripheral === 'E8:72:D1:25:6E:4E') {  //speedo  
           let sEventTime = ((value[6] * 256) + value[5])  //to give 1/1024 seconds, little endian remember [1, 221, 41, 4, 0, 86, 212]
           let eventRotations = value[4] * + 16777216 + value[3] * 65536 + value[2] * 256 + value[1]  //huge?
+          //console.log(eventRotations, sEventTime)
 
           if (oldRotations !== eventRotations) {  //there has been a change in rotations even if sEventRotations rolls over overflows every 4 billion seconds
             rotations = eventRotations - oldRotations
@@ -337,7 +343,7 @@ const App = () => {
             else {
               speedo = 3686400 / (sEventTime - oldSEventTime)   //60 * 60 * 1024 = 3686400 for rphour
               speedo = speedo / rotations  //should be just 1 but I've seen 2 or even 3
-              speedo = speedo * circumferenceKm             
+              speedo = speedo * circumferenceKm          
             }
 
             oldSEventTime = sEventTime
@@ -346,11 +352,17 @@ const App = () => {
           else { //no change in rotations. Should I stick a counter here and go to zero only after a certain time?
             speedo = 0
           }
+
+          speedoAvg[spdcnt] = speedo            //moving average
+          spdcnt === 4 ? spdcnt = 0 : spdcnt++
+          speedo = speedoAvg.reduce( (prevValue, currentValue) => prevValue + currentValue )/5
+
           setSpeed(speedo.toFixed(1))
+          console.log('Speedo ', speedo)
         }
 
         //Cadence
-        //these could be jerky, might need to implement a moving average
+        //this could be jerky, might need to implement a moving average
         if (peripheral === 'D6:70:81:A8:5B:2D') {  //cadence
           let cEventTime = ((value[4] * 256)  + value[3])  //to give 1/1024 seconds, little endian remember [2, 110, 0, 86, 212]
           let cEventTurns = value[2] * 256 + value[1]
@@ -367,7 +379,16 @@ const App = () => {
             oldCEventTime = cEventTime
 
           }
+          else {  //no change in crank turns, should I do this?
+            cadence = 0
+          }
+
+          cadenceAvg[cadcnt] = cadence           //moving average
+          cadcnt === 4 ? cadcnt = 0 : cadcnt++
+          cadence = cadenceAvg.reduce((prevValue, currentValue) => prevValue + currentValue) / 5
+
           setCadence(cadence.toFixed(0))
+          console.log('Cadence ', cadence)
         }
       }
     )
