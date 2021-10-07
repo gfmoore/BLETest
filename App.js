@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react'
-import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, Alert, View, Text, TouchableOpacity, ScrollView, FlatList } from 'react-native'
+import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, Alert, View, Text, TouchableOpacity, FlatList } from 'react-native'
 
 import Icon from 'react-native-vector-icons/Feather'
 
@@ -519,9 +519,6 @@ const styles = StyleSheet.create({
     marginTop: 20, 
     fontSize: 20,
     color: 'blue',
-  },
-  scrollview: {
-    flex: 1,
   },
   peripheralslist: {
     flexDirection: 'row',

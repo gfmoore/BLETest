@@ -60,4 +60,5 @@ buck-out/
 
 # keystore settings by GM
 android/gradle.properties
+android/app/build.gradle
 
