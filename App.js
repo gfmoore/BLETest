@@ -1,9 +1,9 @@
 /**
- * Name:          TSDZ2 OSF Bike Head Unit
+ * Name:          BLE Test
  * Author:        Gordon Moore
- * File:          Bluetooth.js
+ * File:          BLEtest  app.js
  * Date:          1 October 2021
- * Description:   Manage tracks
+ * Description:   Play woth Bluetooth BLE
  * Licence        The MIT License https://opensource.org/licenses/MIT
  *
  * Version history
