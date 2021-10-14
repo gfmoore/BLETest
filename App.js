@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react'
-import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, Alert, View, Text, TouchableOpacity, FlatList } from 'react-native'
+import { Platform, PermissionsAndroid, LogBox, NativeModules, NativeEventEmitter, StyleSheet, Alert, View, Text, TextInput, TouchableOpacity, FlatList } from 'react-native'
 
 import Icon from 'react-native-vector-icons/Feather'
 
@@ -48,6 +48,11 @@ const App = () => {
   const [speed, setSpeed] = useState('0')
   const [cadence, setCadence] = useState('0')
   const [motor, setMotor] = useState('0')
+
+  const [testreaddata, setTestreaddata] = useState([])
+  const [testwritedata, setTestwritedata] = useState([])
+
+  const [sendtext, setSendtext] = useState('')
 
   //-----------------------------------------Async Storage routines-------------------------------------
   const clearAsyncStorage = async () => {  //!!!!!!!!!!!be careful will get rid of everything
@@ -114,7 +119,7 @@ const App = () => {
       try {
         keys = await AsyncStorage.getAllKeys()
         if (keys !== null) {
-          keys.filter(key => key.startsWith('ble'))
+          keys = keys.filter(key => key.startsWith('ble'))
         }
       } catch (e) {
         console.log('GM: get all keys error : ', e)
@@ -149,7 +154,7 @@ const App = () => {
 
 
   const deletePeripheralFromList = (p) => {
-    console.log('delete', p)
+    //console.log('delete', p)
     //put an alert in 
 
     Alert.alert(
@@ -165,10 +170,21 @@ const App = () => {
           text: "OK", onPress: () => {
             let x = peripherals.filter(item => item.id !== p.id)
             setPeripherals(x)
+            //need to actually delete it from async storage
+            delPeripheral(p)
           }
         }
       ]
     )
+  }
+
+  const delPeripheral = async (p) => {
+    try {
+      await AsyncStorage.removeItem('ble'+p.id)
+    }
+    catch (e) {
+      console.log('GM: failed to delete peripheral : ', e)
+    }
   }
 
   //---------------------------------------------------Scan button--------------------------------------------------
@@ -189,7 +205,7 @@ const App = () => {
   const startScan = async () => {  
     try {
       console.log('GM Started scanning...')
-      await BleManager.scan([], 3)                                //these options were supposed to stop duplicates??, false, {numberOfMatches: 1, matchMode: 1, scanMode: 1, reportDelay: 0} ) )  
+      await BleManager.scan([], 5)                                //these options were supposed to stop duplicates??, false, {numberOfMatches: 1, matchMode: 1, scanMode: 1, reportDelay: 0} ) )  
     }
     catch (e) {
       console.log('GM: Error scanning ' + e)
@@ -213,6 +229,7 @@ const App = () => {
   }
 
   const handleDiscoverPeripheral = (p) => {     //if peripheral discovered during scan, controlled by event emitter in useEffect
+    //console.log(p)
     if (p.name !== null) {
       let unique = true
       pDiscovered.forEach(pid => {
@@ -247,7 +264,10 @@ const App = () => {
         await BleManager.connect(itemId)
         setPeripheralsConnected([...peripheralsConnected, i.index])
         const peripheralinfo = await BleManager.retrieveServices(itemId)
+        console.log('Peripheral info ', peripheralinfo)
         //so hard coded!!
+        //peripheral, service, characteristic
+
         if (peripheralinfo.id === 'F3:69:03:E9:DF:F9') {  //the heart rate monitor
           setupNotifier('F3:69:03:E9:DF:F9', '180d', '2A37')
         }
@@ -260,6 +280,18 @@ const App = () => {
         if (peripheralinfo.id === 'xx:xx:xx:xx:xx:xx') {  //TSDZ2 motor
           setupNotifier('xx:xx:xx:xx:xx:xx', 'xxxx', 'xxxx')
         }
+
+        //test with HM-10 (HM Soft) board
+        //read
+        if (peripheralinfo.id === '7C:EC:79:DC:AC:E8') {
+          setupNotifier('7C:EC:79:DC:AC:E8', 'FFE0', 'FFE1')
+        }
+
+        //test with nRF52840 DK board
+        if (peripheralinfo.id === 'D5:81:32:F6:09:3C') {
+          setupNotifier('D5:81:32:F6:09:3C', '1816', '2A5B')
+        }
+
       }
       catch(e) {
         console.log("GM: Couldn't connect ", e)
@@ -317,9 +349,11 @@ const App = () => {
     bleMUpdateValue = await bleManagerEmitter.addListener(
       "BleManagerDidUpdateValueForCharacteristic",
       ({ value, peripheral, characteristic, service }) => {
+        //console.log('Value ', value)
 
         //HRM
         if (peripheral === 'F3:69:03:E9:DF:F9') { 
+
           if (value[0] === 0) {  // Convert bytes array to string if the first byte is a 0 then second byte is the heart rate in decimal, otherwise I don't know what is being returned
             str = value[1].toString()
             setHeartrate(str)
@@ -390,8 +424,90 @@ const App = () => {
           setCadence(cadence.toFixed(0))
           console.log('Cadence ', cadence)
         }
+
+        //HM10
+        if (peripheral === '7C:EC:79:DC:AC:E8') {  
+          setMotor(String.fromCharCode.apply(null, value))
+          console.log('HM10 ', value, String.fromCharCode.apply(null, value))   //or try String.fromCharCode(...array); or String.fromCodePoint(...array) or let bytesView = new Uint8Array([104, 101, 108, 108, 111]); then str = new TextDecoder().decode(bytesView); 
+        }
       }
     )
+  }
+
+  const readdata = async () => {
+    let readdata
+    try {
+      // readdata = await BleManager.read("7C:EC:79:DC:AC:E8", "1800", "2A00" )
+      // console.log('Data from HM10 2A00 ',readdata)
+      // readdata = await BleManager.read("7C:EC:79:DC:AC:E8", "1800", "2A01" )
+      // console.log('Data from HM10 2A01 ',readdata)
+      // readdata = await BleManager.read("7C:EC:79:DC:AC:E8", "1800", "2A02" )
+      // console.log('Data from HM10 2A02 ',readdata)
+      // readdata = await BleManager.read("7C:EC:79:DC:AC:E8", "1800", "2A04" )
+      // console.log('Data from HM10 2A04 ',readdata)
+
+      readdata = await BleManager.read("7C:EC:79:DC:AC:E8", "FFE0", "FFE1" )
+      console.log('Read from HM10 FFE0 FFE1 ', readdata)
+
+      setTestreaddata(readdata)
+      setMotor(readdata)
+    }
+    catch (e) {
+      console.log('GM read error ', e)
+    }
+
+  }
+
+  const writedata = async () => {
+    //let str = 'Hello HM10'
+    let str = sendtext
+    let bdata = toUTF8Array(str)    //48-65-6C-6C-6F   //72-101-108-108-111
+    setTestwritedata(str)
+
+    try {
+      await BleManager.retrieveServices("7C:EC:79:DC:AC:E8")
+      await BleManager.writeWithoutResponse("7C:EC:79:DC:AC:E8", "FFE0", "FFE1", bdata)
+      console.log('Write to HM10 (FFE0 FFE1) ', bdata, str)
+    }
+    catch (e) {
+      console.log('GM write error ', e)
+    }
+  }
+
+
+  const toUTF8Array = (str) => {
+    let utf8 = [];
+    for (let i = 0; i < str.length; i++) {
+      let charcode = str.charCodeAt(i);
+      if (charcode < 0x80) utf8.push(charcode);
+      else if (charcode < 0x800) {
+        utf8.push(0xc0 | (charcode >> 6),
+          0x80 | (charcode & 0x3f));
+      }
+      else if (charcode < 0xd800 || charcode >= 0xe000) {
+        utf8.push(0xe0 | (charcode >> 12),
+          0x80 | ((charcode >> 6) & 0x3f),
+          0x80 | (charcode & 0x3f));
+      }
+      // surrogate pair
+      else {
+        i++;
+        // UTF-16 encodes 0x10000-0x10FFFF by
+        // subtracting 0x10000 and splitting the
+        // 20 bits of 0x0-0xFFFFF into two halves
+        charcode = 0x10000 + (((charcode & 0x3ff) << 10)
+          | (str.charCodeAt(i) & 0x3ff));
+        utf8.push(0xf0 | (charcode >> 18),
+          0x80 | ((charcode >> 12) & 0x3f),
+          0x80 | ((charcode >> 6) & 0x3f),
+          0x80 | (charcode & 0x3f));
+      }
+    }
+    return utf8;
+  }
+
+  const sendtextchange = (txt) => {
+    setSendtext(txt)
   }
 
   //----------------------------------------------JSX---------------------------------------------------------
@@ -446,7 +562,7 @@ const App = () => {
               )]} >
              
               <View style={styles.peripheralslist}>
-                <Text style={[styles.peripheralrowtext, { color: 'blue' }]}>{index} {item.peripheral.name} </Text>
+                <Text style={[styles.peripheralrowtext, { color: 'blue' }]}>{item.peripheral.name} </Text>
                 <Icon name='trash-2' onPress={() => deletePeripheralFromList( item )} color='blue' size={25}/>
               </View>
             </TouchableOpacity>
@@ -467,6 +583,13 @@ const App = () => {
          null
       }
 
+      {/* <TouchableOpacity onPress={ readdata } style={styles.button}><Text style={styles.buttontext}>Read</Text></TouchableOpacity>
+      <Text style={styles.text}>Read data : {testreaddata} </Text> */}
+      <TextInput style={styles.textInput} autoCapitalize='none' autoCorrect={false}
+        value={ sendtext } onChangeText={ sendtextchange } 
+      />
+      <TouchableOpacity onPress={ writedata } style={styles.button}><Text style={styles.buttontext}>Write</Text></TouchableOpacity>
+      <Text style={styles.text}>Writedata : {testwritedata} </Text>
     </View>  
   )
 }
@@ -493,7 +616,7 @@ const styles = StyleSheet.create({
     marginLeft: 20,
     marginTop: 20, 
     width: 150, 
-    height: 70, 
+    height: 40, 
     backgroundColor: 'lightgreen',
     alignItems: 'center',
     justifyContent: 'center',
@@ -507,6 +630,16 @@ const styles = StyleSheet.create({
   text: {
     marginLeft: 20,
     marginTop: 20, 
+    fontSize: 20,
+  },
+  textInput: {
+    width: 300,
+    height: 50,
+    borderWidth: 1,
+    borderColor: 'black',
+    marginLeft: 20,
+    marginTop: 20,
+    borderRadius: 10,
     fontSize: 20,
   },
   heartratetext: {
@@ -548,3 +681,20 @@ const styles = StyleSheet.create({
 })
 
 export default App
+
+// https://stackoverflow.com/questions/3195865/converting-byte-array-to-string-in-javascript
+//  (5).toString(2) will give you 101, but the complete binary conversion is in reality 00000101, and that's why you might need to create a leftPad implementation to fill the string byte with leading zeros. 
+// For each byte in our array, retrieve the char code value of the binary value
+
+// const binArrayToString = array => array.map(byte => String.fromCharCode(parseInt(byte, 2))).join('')
+
+// // Basic left pad implementation to ensure string is on 8 bits
+// const leftPad = str => str.length < 8 ? (Array(8).join('0') + str).slice(-8) : str
+
+// // For each char of the string, get the int code and convert it to binary. Ensure 8 bits.
+// const stringToBinArray = str => str.split('').map(c => leftPad(c.charCodeAt().toString(2)))
+
+// const array = stringToBinArray('abc')
+
+// console.log(array)
+// console.log(binArrayToString(array))
